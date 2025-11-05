@@ -1,5 +1,11 @@
 import discord
 from discord.ext import commands
+from discord.ui import Button, View
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
+TOKEN = os.getenv("TOKEN")
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -18,15 +24,18 @@ IMAGENS = {
 ITENS = {
     "lanches": ["Hambúrguer", "X-Bacon", "X-Burguer", "X-Calabresa", "X-Egg", "MC bacon"],
     "pizzas": ["Pepperoni", "Portuguesa", "Napolitana", "Tropical", "Calabresa"],
-    "porcoes": ["Mandioca", "Batata ou Polenta", "Croquete Mandioca c/ jabá, Presunto e Mussarela, Provolone ou c/ Picante", "Pastel de Jabá c/ Mussarela", "Torresmo", "Frango c/ Polenta, Batata ou Mandioca"],
+    "porcoes": ["Mandioca", "Batata ou Polenta", "Croquete", "Pastel de Jabá", "Torresmo", "Frango c/ Polenta"],
     "bebidas": ["Água", "Refrigerante", "Sucos", "Cerveja", "Chopp", "Café", "Capuccino"]
 }
 
-# --- REGISTRO DE QUEM JÁ RECEBEU SAUDAÇÃO ---
 usuarios_atendidos = set()
+fluxo_pedido = {}  # Armazena progresso do pedido do usuário
 
 
-class CategoriaView(discord.ui.View):
+# =========================================================
+# BOTÕES DAS CATEGORIAS
+# =========================================================
+class CategoriaView(View):
     def __init__(self):
         super().__init__(timeout=None)
 
@@ -47,49 +56,133 @@ class CategoriaView(discord.ui.View):
         await enviar_cardapio_categoria(interaction, "bebidas")
 
 
+# =========================================================
+# ENVIA IMAGEM + BOTÕES DOS ITENS
+# =========================================================
 async def enviar_cardapio_categoria(interaction, categoria):
-    """Envia a imagem da categoria + botões dos itens"""
 
-    # Envia a imagem
     file = discord.File(IMAGENS[categoria])
     await interaction.response.send_message(file=file)
 
-    # Cria botões dinamicamente
-    view = discord.ui.View()
+    view = View()
+
+    # Criar botão para cada item
     for item in ITENS[categoria]:
-        view.add_item(discord.ui.Button(label=item, style=discord.ButtonStyle.success))
+        button = Button(label=item, style=discord.ButtonStyle.success)
 
-    await interaction.followup.send(f"Escolha uma opção de **{categoria.capitalize()}**:", view=view)
+        async def handler(inter, item_escolhido=item):
+            await iniciar_fluxo_pedido(inter, item_escolhido)
+
+        button.callback = handler
+        view.add_item(button)
+
+    await interaction.followup.send(
+        f"Escolha uma opção de **{categoria.capitalize()}**:",
+        view=view
+    )
 
 
-# --- PRIMEIRA MENSAGEM DO CLIENTE ---
+# =========================================================
+# INICIAR FLUXO DE PEDIDO
+# =========================================================
+async def iniciar_fluxo_pedido(interaction, item):
+    user_id = interaction.user.id
+
+    fluxo_pedido[user_id] = {
+        "item": item,
+        "etapa": "nome",
+        "nome": "",
+        "endereco": "",
+        "pagamento": ""
+    }
+
+    await interaction.response.send_message(
+        f"✅ Você escolheu **{item}**.\n\n"
+        "Vamos finalizar o pedido!\n\n"
+        "**Digite seu nome:**"
+    )
+
+
+# =========================================================
+# CAPTURAR MENSAGENS DO USUÁRIO (NOME > ENDEREÇO > PAGAMENTO)
+# =========================================================
 @bot.event
-async def on_message(message: discord.Message):
+async def on_message(message):
 
     if message.author == bot.user:
         return
 
-    # Apenas primeira mensagem
-    if message.author.id not in usuarios_atendidos:
-        usuarios_atendidos.add(message.author.id)
+    user_id = message.author.id
+
+    # Se não está no fluxo de pedido
+    if user_id not in fluxo_pedido:
+
+        # Primeira mensagem
+        if user_id not in usuarios_atendidos:
+            usuarios_atendidos.add(user_id)
+
+            await message.channel.send(
+                f"Olá **{message.author.mention}**, seja bem-vindo! 😄\n"
+                "Escolha uma categoria abaixo para ver o cardápio.\n\n"
+                "Para ver novamente, digite **!cardapio**",
+                view=CategoriaView()
+            )
+            return
+
+        return await bot.process_commands(message)
+
+    # Usuário está no fluxo do pedido
+    etapa = fluxo_pedido[user_id]["etapa"]
+
+    if etapa == "nome":
+        fluxo_pedido[user_id]["nome"] = message.content
+        fluxo_pedido[user_id]["etapa"] = "endereco"
+
+        await message.channel.send("✅ Nome anotado!\nAgora digite **seu endereço completo**:")
+        return
+
+    if etapa == "endereco":
+        fluxo_pedido[user_id]["endereco"] = message.content
+        fluxo_pedido[user_id]["etapa"] = "pagamento"
 
         await message.channel.send(
-            f"Olá **{message.author.mention}**, seja bem-vindo! 😄\n"
-            "Escolha uma categoria abaixo para ver o cardápio.\n\n"
-            "Para ver novamente, digite **!cardapio**",
-            view=CategoriaView()
+            "✅ Endereço registrado!\n"
+            "Agora escolha a forma de pagamento:\n\n"
+            "**Digite:**\n• Dinheiro\n• Pix\n• Cartão"
         )
         return
 
-    # Permite comandos como !cardapio
-    await bot.process_commands(message)
+    if etapa == "pagamento":
+        fluxo_pedido[user_id]["pagamento"] = message.content
+        fluxo_pedido[user_id]["etapa"] = "finalizado"
+
+        item = fluxo_pedido[user_id]["item"]
+        nome = fluxo_pedido[user_id]["nome"]
+        end = fluxo_pedido[user_id]["endereco"]
+        pag = fluxo_pedido[user_id]["pagamento"]
+
+        await message.channel.send(
+            "✅ **PEDIDO FINALIZADO!**\n\n"
+            f"🍽 **Item:** {item}\n"
+            f"👤 **Nome:** {nome}\n"
+            f"🏠 **Endereço:** {end}\n"
+            f"💳 **Pagamento:** {pag}\n\n"
+            "Seu pedido está sendo preparado! ✅"
+        )
+
+        fluxo_pedido.pop(user_id)
+        return
 
 
-# --- COMANDO PARA VER O CARDÁPIO NOVAMENTE ---
+# =========================================================
+# COMANDO PARA VER O CARDÁPIO
+# =========================================================
 @bot.command()
 async def cardapio(ctx):
     await ctx.send("Escolha uma categoria:", view=CategoriaView())
 
 
-# --- TOKEN ---
-bot.run("MTQzMzUxMzA5MzYzNTI0NDA5Mg.GrEn4B.DdUVPl4CcWUBrcelFpNEAcTKvQVRELJ3rBSsgk")
+# =========================================================
+# START
+# =========================================================
+bot.run(TOKEN)
