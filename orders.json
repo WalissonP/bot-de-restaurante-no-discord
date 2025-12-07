@@ -1,0 +1,20 @@
+[
+  {
+    "order_id": "80A36B3D",
+    "user_id": 1265119301505908880,
+    "user_name": "susw0_41995",
+    "items": [
+      {
+        "categoria": "lanches",
+        "item": "X-Bacon",
+        "preco": 26.0
+      }
+    ],
+    "total": 26.0,
+    "nome_cliente": "Walisson Pastori Campos",
+    "endereco": "Rhshsj",
+    "pagamento": "pix",
+    "timestamp": "2025-11-13T01:57:52.021940Z",
+    "pix_code": "PIX-9250699222134395"
+  }
+]
